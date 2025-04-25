@@ -4,7 +4,7 @@ import requests
 import base64
 import mimetypes
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from PIL import Image
 
 import openai
@@ -31,6 +31,7 @@ STRAVA_CLIENT_ID = int(os.getenv("STRAVA_CLIENT_ID"))
 STRAVA_CLIENT_SECRET = os.getenv("STRAVA_CLIENT_SECRET")
 STRAVA_REFRESH_TOKEN = os.getenv("STRAVA_REFRESH_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY", "AIzaSyC_By4kdX7WVdO0bultrhAl36hV5blIjkg")
 
 # Optional settings
 USER_IMAGES_DIR = os.getenv("USER_IMAGES_DIR", "/Users/bryanaltman/StravaPictures")
@@ -38,6 +39,19 @@ BRYAN_IMAGES_DIR = os.getenv("BRYAN_IMAGES_DIR", "bryanphotos")  # Directory wit
 IMAGE_SIZE = os.getenv("OPENAI_IMAGE_SIZE", "1024x1024")
 IMAGE_MODEL = os.getenv("OPENAI_IMAGE_MODEL", "gpt-image-1")  # Latest OpenAI image model
 OUTPUT_DIR = os.getenv("OUTPUT_DIR", "generated_images")
+
+"""
+Generate and attach a summary image for the athlete's most recent Strava run.
+
+Workflow:
+1. Refresh Strava access token using the stored refresh token.
+2. Fetch the athlete's most recent activity (limit=1).
+3. Analyze a photo of the runner using GPT-4o Vision.
+4. Build an image generation prompt that summarises the run.
+5. Generate an image with OpenAI (imagegen) based on the prompt.
+6. Download the generated image locally.
+7. Provide instructions for adding the image to Strava activity.
+"""
 
 # Basic validation to catch missing credentials early
 for var_name in ("STRAVA_CLIENT_ID", "STRAVA_CLIENT_SECRET", "STRAVA_REFRESH_TOKEN", "OPENAI_API_KEY"):
@@ -76,6 +90,21 @@ def get_last_run(client: Client):
     
     return detailed_activity
 
+def get_recent_runs(client: Client, limit: int = 5):
+    """Return the most recent activities (runs) for the authenticated athlete."""
+    # Get recent activities
+    activities = list(client.get_activities(limit=limit))
+    if not activities:
+        raise RuntimeError("No activities found for athlete.")
+    
+    return activities
+
+def get_activity_details(client: Client, activity_id: int):
+    """Fetch detailed information for a specific activity."""
+    # Request the full activity with detailed information
+    detailed_activity = client.get_activity(activity_id)
+    return detailed_activity
+
 # ------ IMAGE ANALYSIS FUNCTIONS ------
 
 def describe_runner_photo(path: str) -> str:
@@ -97,98 +126,234 @@ def build_prompt(activity, runner_description: str | None = None) -> str:
     # Extract activity stats and convert to US customary units
     distance_meters = activity.distance
     distance_km = round(distance_meters / 1000.0, 2)
-    distance_miles = round(distance_meters / 1609.34, 2)  # Convert to miles
+    distance_miles = round(distance_meters / 1609.34, 2)
     
     moving_time = str(activity.moving_time)
     
     # Calculate pace from moving_time, handling both timedelta and integer seconds
     moving_time_obj = activity.moving_time
     total_seconds = 0
-    
-    # Handle different types of moving_time objects
-    if isinstance(moving_time_obj, (int, float)):
-        # If it's directly seconds (as seen in debug)
+    if isinstance(moving_time_obj, timedelta):
+        total_seconds = moving_time_obj.total_seconds()
+    elif isinstance(moving_time_obj, int):
         total_seconds = moving_time_obj
+    
+    # Calculate pace in min/mile (U.S. customary units)
+    if total_seconds > 0 and distance_miles > 0:
+        pace_seconds_per_mile = total_seconds / distance_miles
+        pace_minutes = int(pace_seconds_per_mile // 60)
+        pace_seconds = int(pace_seconds_per_mile % 60)
+        pace_str = f"{pace_minutes}:{pace_seconds:02d} min/mile"  # U.S. customary pace
     else:
-        # Try to extract from timedelta-like object (traditional approach)
-        try:
-            total_seconds = (
-                getattr(moving_time_obj, 'hours', 0) * 3600 + 
-                getattr(moving_time_obj, 'minutes', 0) * 60 + 
-                getattr(moving_time_obj, 'seconds', 0)
-            )
-        except (AttributeError, TypeError):
-            pass
+        pace_str = "unknown pace"
     
-    # Calculate pace in both metric and imperial units
-    avg_pace_metric = "N/A"
-    avg_pace_imperial = "N/A"
+    # Calculate elevation in feet (U.S. customary units)
+    total_elevation_gain_meters = getattr(activity, 'total_elevation_gain', 0)
+    total_elevation_gain_feet = round(total_elevation_gain_meters * 3.28084)  # Convert to feet
     
-    if distance_meters > 0:
-        if total_seconds > 0:
-            # Calculate pace (metric)
-            pace_min_per_km = total_seconds / (distance_meters / 1000.0) / 60.0
-            mins_km = int(pace_min_per_km)
-            secs_km = int((pace_min_per_km - mins_km) * 60)
-            avg_pace_metric = f"{mins_km}:{secs_km:02d} min/km"
-            
-            # Calculate pace (imperial)
-            pace_min_per_mile = total_seconds / (distance_meters / 1609.34) / 60.0
-            mins_mile = int(pace_min_per_mile)
-            secs_mile = int((pace_min_per_mile - mins_mile) * 60)
-            avg_pace_imperial = f"{mins_mile}:{secs_mile:02d} min/mile"
-        elif hasattr(activity, 'average_speed') and activity.average_speed > 0:
-            # Calculate from average_speed (m/s)
-            pace_secs_per_km = 1000 / activity.average_speed
-            pace_mins_km = int(pace_secs_per_km // 60)
-            pace_secs_km = int(pace_secs_per_km % 60)
-            avg_pace_metric = f"{pace_mins_km}:{pace_secs_km:02d} min/km"
-            
-            pace_secs_per_mile = 1609.34 / activity.average_speed
-            pace_mins_mile = int(pace_secs_per_mile // 60)
-            pace_secs_mile = int(pace_secs_per_mile % 60)
-            avg_pace_imperial = f"{pace_mins_mile}:{pace_secs_mile:02d} min/mile"
+    # Get heart rate data if available
+    avg_heartrate = getattr(activity, 'average_heartrate', None)
+    max_heartrate = getattr(activity, 'max_heartrate', None)
     
-    # Convert elevation gain from meters to feet
-    elev_gain_meters = getattr(activity, "total_elevation_gain", 0)
-    elev_gain_feet = round(elev_gain_meters * 3.28084)  # Convert to feet
-    
-    # Get average location (lat, lon)
-    avg_lat, avg_lng = get_run_location(activity)
-    
-    # Analyze run type based on splits data
+    # Analyze run type and splits
     run_type = analyze_run_type(activity)
     
-    # Build the base prompt with activity details (in US customary units)
-    prompt = (
-        f"Create a stylized running poster celebrating a recent {run_type}. "
-        f"The run was {distance_miles} miles with moving time {moving_time} and avg pace {avg_pace_imperial}. "
-    )
-    
-    # Add elevation information if significant
-    if elev_gain_feet > 100:
-        prompt += f"The run included {elev_gain_feet} feet of elevation gain. "
-    
-    # Add location information if available
+    # Get location information
+    avg_lat, avg_lng = get_run_location(activity)
+    location_name = ""
     if avg_lat and avg_lng:
-        prompt += f"The run took place at coordinates ({avg_lat:.6f}, {avg_lng:.6f}). "
+        location_name = get_location_details(avg_lat, avg_lng)
     
-    prompt += (
-        "The runner should look like the person in the reference image, but in running gear. "
-        "Keep the same facial features and general appearance, but show them in motion with running attire. "
-        "This is for personal, non-commercial use only. "
-    )
+    # Initialize prompt with the run type
+    if run_type == "Interval Run":
+        prompt = "Create a stylized running poster celebrating a recent intense interval workout. "
+    elif run_type == "Long Run":
+        prompt = "Create a stylized running poster celebrating a recent long run. "
+    elif run_type == "Tempo Run":
+        prompt = "Create a stylized running poster celebrating a recent tempo run. "
+    else:
+        prompt = "Create a stylized running poster celebrating a recent easy run. "
     
-    # Add style guidelines
-    prompt += (
-        "Overall style should evoke accomplishment and athleticism, "
-        "with dynamic motion and inspirational feel. "
-        f"Add visual elements showing the distance ({distance_miles} miles) and pace ({avg_pace_imperial}) "
-        "statistics artistically integrated into the design. "
-        "This is purely fictional artwork for personal use."
-    )
+    # Add basic stats in U.S. customary units
+    prompt += f"The run was {distance_miles} miles with moving time {moving_time} and avg pace {pace_str}. "
+    
+    # Add heart rate information if available
+    if avg_heartrate:
+        prompt += f"Average heart rate during the run was {int(avg_heartrate)} BPM. "
+    
+    # Add elevation in feet
+    prompt += f"The run included {total_elevation_gain_feet} feet of elevation gain. "
+    
+    # Add location information
+    if location_name:
+        prompt += f"The run took place in {location_name}. Show visual elements or scenery that represents this location. "
+    
+    # Add reference to runner description if provided
+    if runner_description:
+        prompt += f"The runner should look like the person in the reference image, but in running gear. Keep the same facial features and general appearance, but show them in motion with running attire. "
+    
+    # Add usage disclaimer
+    prompt += "This is for personal, non-commercial use only. "
+    
+    # Add style guidance for more modern, attractive posters
+    prompt += "Overall style should evoke accomplishment and athleticism, with dynamic motion and inspirational feel. "
+    
+    # Add instructions for integrating stats
+    prompt += f"Add visual elements showing the distance ({distance_miles} miles) and pace ({pace_str})"
+    
+    # Add heart rate to visualization if available
+    if avg_heartrate:
+        prompt += f" and heart rate ({int(avg_heartrate)} BPM)"
+    
+    # Finish the stats visualization instruction
+    prompt += " statistics artistically integrated into the design. "
+    
+    # Add instruction to avoid duplicating numbers
+    prompt += "Do not duplicate any numbers in the image - each statistic should appear only once. "
+    
+    # Final reminder that this is fictional
+    prompt += "This is purely fictional artwork for personal use."
     
     return prompt
+
+def format_activity_summary(activity, index: int):
+    """Format an activity for display in the selection menu."""
+    # Extract basic activity info
+    name = getattr(activity, 'name', 'Unknown Activity')
+    distance_meters = getattr(activity, 'distance', 0)
+    distance_miles = round(distance_meters / 1609.34, 2)
+    
+    # Get heart rate if available
+    heart_rate_info = ""
+    avg_heartrate = getattr(activity, 'average_heartrate', None)
+    if avg_heartrate:
+        heart_rate_info = f", {int(avg_heartrate)} BPM"
+    
+    # Get date and format it nicely
+    start_date = getattr(activity, 'start_date_local', None)
+    date_str = start_date.strftime('%Y-%m-%d %H:%M') if start_date else 'Unknown Date'
+    
+    # Get location if available
+    location = ""
+    start_latlng = getattr(activity, 'start_latlng', None)
+    if start_latlng:
+        # Extract coordinates
+        try:
+            if hasattr(start_latlng, 'lat') and hasattr(start_latlng, 'lng'):
+                lat, lng = start_latlng.lat, start_latlng.lng
+            elif isinstance(start_latlng, (list, tuple)) and len(start_latlng) >= 2:
+                lat, lng = float(start_latlng[0]), float(start_latlng[1])
+            elif hasattr(start_latlng, 'root') and isinstance(start_latlng.root, (list, tuple)) and len(start_latlng.root) >= 2:
+                lat, lng = float(start_latlng.root[0]), float(start_latlng.root[1])
+            
+            # Look up location
+            if 'lat' in locals() and 'lng' in locals():
+                location_name = get_location_details(lat, lng)
+                if location_name:
+                    location = f" in {location_name}"
+        except Exception as e:
+            print(f"Error getting location: {e}")
+    
+    # Format the summary
+    return f"{index}. {date_str}: {name} - {distance_miles} miles{heart_rate_info}{location}"
+
+def select_activity(activities):
+    """Display a menu of activities and let the user select one."""
+    print("\nYour recent runs:")
+    print("----------------")
+    
+    # Show each activity with details
+    for i, activity in enumerate(activities, 1):
+        print(format_activity_summary(activity, i))
+    
+    # Get user selection
+    while True:
+        try:
+            choice = input("\nSelect a run to generate artwork for (1-5, or 'q' to quit): ")
+            if choice.lower() == 'q':
+                return None
+                
+            choice_num = int(choice)
+            if 1 <= choice_num <= len(activities):
+                return activities[choice_num - 1]
+            else:
+                print(f"Please enter a number between 1 and {len(activities)}")
+        except ValueError:
+            print("Please enter a valid number or 'q' to quit")
+
+def get_location_details(lat, lng) -> str:
+    """
+    Get the city, state/province, and country for a given latitude and longitude.
+    
+    Instead of using an API, we'll use a simple lookup based on coordinate ranges
+    for common running locations.
+    
+    Args:
+        lat: Latitude
+        lng: Longitude
+        
+    Returns:
+        str: A location name (e.g., "Toronto, Canada")
+    """
+    if not lat or not lng:
+        return None
+    
+    # Print the coordinates we're using
+    print(f"Looking up location for coordinates: ({lat}, {lng})")
+        
+    try:
+        # Force coordinate conversion to float just in case
+        lat = float(lat)
+        lng = float(lng)
+        
+        # Simple location lookup table based on coordinate ranges
+        # Format: ((min_lat, max_lat), (min_lng, max_lng), "Location Name")
+        location_ranges = [
+            # Toronto area
+            ((43.6, 43.8), (-79.5, -79.2), "Toronto, Canada"),
+            
+            # Montreal area - expanded range to catch more of the city and suburbs
+            ((45.4, 45.7), (-73.7, -73.4), "Montreal, Canada"),
+            
+            # New York City - expanded to include all boroughs
+            ((40.5, 40.92), (-74.25, -73.68), "New York City, USA"),
+            
+            # San Francisco proper + parts of Bay Area
+            ((37.7, 37.9), (-122.5, -122.3), "San Francisco, USA"),
+            
+            # Los Angeles metro area
+            ((33.7, 34.2), (-118.5, -118.1), "Los Angeles, USA"),
+            
+            # Boston area
+            ((42.3, 42.4), (-71.1, -70.9), "Boston, USA"),
+            
+            # Chicago area
+            ((41.8, 42.0), (-87.8, -87.5), "Chicago, USA"),
+            
+            # London area
+            ((51.4, 51.6), (-0.2, 0.1), "London, UK"),
+            
+            # Paris area
+            ((48.8, 48.9), (2.2, 2.4), "Paris, France"),
+            
+            # Berlin area
+            ((52.4, 52.6), (13.3, 13.5), "Berlin, Germany"),
+        ]
+        
+        # Check if coordinates fall within any known range
+        for (lat_range, lng_range, location) in location_ranges:
+            if lat_range[0] <= lat <= lat_range[1] and lng_range[0] <= lng <= lng_range[1]:
+                print(f"Location identified: {location}")
+                return location
+        
+        # If no match, we can return a general "based on coordinates" message
+        coords_rounded = f"{lat:.2f}, {lng:.2f}"
+        print(f"No specific location identified for {coords_rounded}")
+        return f"coordinates {coords_rounded}"
+        
+    except Exception as e:
+        print(f"Error determining location: {e}")
+        return None
 
 def get_run_location(activity) -> tuple[float, float]:
     """
@@ -215,9 +380,14 @@ def get_run_location(activity) -> tuple[float, float]:
                 start_lng = start_latlng.lng
             # For list/tuple representation
             elif isinstance(start_latlng, (list, tuple)) and len(start_latlng) >= 2:
-                start_lat = start_latlng[0]
-                start_lng = start_latlng[1]
+                start_lat = float(start_latlng[0])
+                start_lng = float(start_latlng[1])
+            # For objects with a "root" attribute containing lat/lng
+            elif hasattr(start_latlng, 'root') and isinstance(start_latlng.root, (list, tuple)) and len(start_latlng.root) >= 2:
+                start_lat = float(start_latlng.root[0])
+                start_lng = float(start_latlng.root[1])
             else:
+                print(f"Unrecognized start location format: {type(start_latlng)}")
                 return None, None
                 
             # Same for end point
@@ -225,9 +395,13 @@ def get_run_location(activity) -> tuple[float, float]:
                 end_lat = end_latlng.lat
                 end_lng = end_latlng.lng
             elif isinstance(end_latlng, (list, tuple)) and len(end_latlng) >= 2:
-                end_lat = end_latlng[0]
-                end_lng = end_latlng[1]
+                end_lat = float(end_latlng[0])
+                end_lng = float(end_latlng[1])
+            elif hasattr(end_latlng, 'root') and isinstance(end_latlng.root, (list, tuple)) and len(end_latlng.root) >= 2:
+                end_lat = float(end_latlng.root[0])
+                end_lng = float(end_latlng.root[1])
             else:
+                print(f"Unrecognized end location format: {type(end_latlng)}")
                 return None, None
             
             # Calculate averages
@@ -236,6 +410,15 @@ def get_run_location(activity) -> tuple[float, float]:
             
             print(f"Average location: ({avg_lat}, {avg_lng})")
             return avg_lat, avg_lng
+        
+        # If we don't have both start and end, try to use start point only
+        elif start_latlng:
+            if hasattr(start_latlng, 'lat') and hasattr(start_latlng, 'lng'):
+                return start_latlng.lat, start_latlng.lng
+            elif isinstance(start_latlng, (list, tuple)) and len(start_latlng) >= 2:
+                return float(start_latlng[0]), float(start_latlng[1])
+            elif hasattr(start_latlng, 'root') and isinstance(start_latlng.root, (list, tuple)) and len(start_latlng.root) >= 2:
+                return float(start_latlng.root[0]), float(start_latlng.root[1])
             
         return None, None
     except Exception as e:
@@ -443,15 +626,21 @@ def main():
         print("Initializing Strava client...")
         strava_client = Client(access_token=access_token)
         
-        # 2. Get the latest run
-        print("Getting latest run...")
-        activity = get_last_run(strava_client)
-        print(f"Fetched activity: {activity.name} (ID: {activity.id})")
+        # 2. Get recent runs
+        print("Fetching your recent runs...")
+        recent_activities = get_recent_runs(strava_client, limit=5)
         
-        # Print activity details for debugging
-        print(f"Activity attributes: {dir(activity)}")
+        # 3. Let user select which run to use
+        selected_activity = select_activity(recent_activities)
+        if not selected_activity:
+            print("No activity selected. Exiting.")
+            return 0
         
-        # 3. Build prompt and generate image
+        # 4. Get detailed information for the selected activity
+        print(f"Fetching detailed information for: {selected_activity.name} (ID: {selected_activity.id})")
+        activity = get_activity_details(strava_client, selected_activity.id)
+        
+        # 5. Build prompt and generate image
         print("Building prompt for image generation...")
         prompt = build_prompt(activity)
         print(f"Generated prompt: {prompt}")
@@ -460,13 +649,11 @@ def main():
         image_path = generate_image(prompt)
         print(f"Image saved locally at: {image_path}")
         
-        # No need to download the image as it's already saved locally
-        
-        # 5. Provide instructions for Strava (API doesn't allow direct photo uploads)
+        # 6. Provide instructions for Strava (API doesn't allow direct photo uploads)
         print("\nNOTE: Your Strava token only has read permissions (not activity:write)")
         print("To manually add this image to your Strava activity:")
         print(f"1. Open the image at: {image_path}")
-        print("2. Open your activity on Strava")
+        print(f"2. Open your activity on Strava: https://www.strava.com/activities/{activity.id}")
         print("3. Click 'Add Photo' and upload the downloaded image")
         
     except Exception as e:
