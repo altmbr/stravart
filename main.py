@@ -153,6 +153,9 @@ def build_prompt(activity, runner_description: str | None = None) -> str:
     elev_gain_meters = getattr(activity, "total_elevation_gain", 0)
     elev_gain_feet = round(elev_gain_meters * 3.28084)  # Convert to feet
     
+    # Get average location (lat, lon)
+    avg_lat, avg_lng = get_run_location(activity)
+    
     # Analyze run type based on splits data
     run_type = analyze_run_type(activity)
     
@@ -165,6 +168,10 @@ def build_prompt(activity, runner_description: str | None = None) -> str:
     # Add elevation information if significant
     if elev_gain_feet > 100:
         prompt += f"The run included {elev_gain_feet} feet of elevation gain. "
+    
+    # Add location information if available
+    if avg_lat and avg_lng:
+        prompt += f"The run took place at coordinates ({avg_lat:.6f}, {avg_lng:.6f}). "
     
     prompt += (
         "The runner should look like the person in the reference image, but in running gear. "
@@ -182,6 +189,58 @@ def build_prompt(activity, runner_description: str | None = None) -> str:
     )
     
     return prompt
+
+def get_run_location(activity) -> tuple[float, float]:
+    """
+    Extract the average latitude and longitude from the run activity.
+    Uses the start and end points to calculate the average location.
+    
+    Returns:
+        tuple[float, float]: (avg_latitude, avg_longitude) or (None, None) if location data isn't available
+    """
+    try:
+        # Check if we have both start and end coordinates
+        start_latlng = getattr(activity, 'start_latlng', None)
+        end_latlng = getattr(activity, 'end_latlng', None)
+        
+        # Debug log the location data
+        print(f"Start location: {start_latlng}")
+        print(f"End location: {end_latlng}")
+        
+        # Calculate average location
+        if start_latlng and end_latlng:
+            # For LatLng objects, extract lat and lng attributes
+            if hasattr(start_latlng, 'lat') and hasattr(start_latlng, 'lng'):
+                start_lat = start_latlng.lat
+                start_lng = start_latlng.lng
+            # For list/tuple representation
+            elif isinstance(start_latlng, (list, tuple)) and len(start_latlng) >= 2:
+                start_lat = start_latlng[0]
+                start_lng = start_latlng[1]
+            else:
+                return None, None
+                
+            # Same for end point
+            if hasattr(end_latlng, 'lat') and hasattr(end_latlng, 'lng'):
+                end_lat = end_latlng.lat
+                end_lng = end_latlng.lng
+            elif isinstance(end_latlng, (list, tuple)) and len(end_latlng) >= 2:
+                end_lat = end_latlng[0]
+                end_lng = end_latlng[1]
+            else:
+                return None, None
+            
+            # Calculate averages
+            avg_lat = (start_lat + end_lat) / 2
+            avg_lng = (start_lng + end_lng) / 2
+            
+            print(f"Average location: ({avg_lat}, {avg_lng})")
+            return avg_lat, avg_lng
+            
+        return None, None
+    except Exception as e:
+        print(f"Error getting run location: {e}")
+        return None, None
 
 def analyze_run_type(activity) -> str:
     """
@@ -388,6 +447,9 @@ def main():
         print("Getting latest run...")
         activity = get_last_run(strava_client)
         print(f"Fetched activity: {activity.name} (ID: {activity.id})")
+        
+        # Print activity details for debugging
+        print(f"Activity attributes: {dir(activity)}")
         
         # 3. Build prompt and generate image
         print("Building prompt for image generation...")
