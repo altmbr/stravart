@@ -123,40 +123,35 @@ def describe_runner_photo(path: str) -> str:
 
 def build_prompt(activity, runner_description: str | None = None) -> str:
     """Construct a text prompt for imagegen summarising the activity."""
-    # Extract activity stats and convert to US customary units
-    distance_meters = activity.distance
-    distance_km = round(distance_meters / 1000.0, 2)
-    distance_miles = round(distance_meters / 1609.34, 2)
+    # Get activity name/title
+    activity_name = getattr(activity, 'name', "Activity")
     
-    moving_time = str(activity.moving_time)
+    # Get activity type and convert to string to safely use lower()
+    activity_type_obj = getattr(activity, 'type', 'Run')
+    if hasattr(activity_type_obj, 'root'):
+        activity_type = str(activity_type_obj.root)
+    else:
+        activity_type = str(activity_type_obj)
     
-    # Calculate pace from moving_time, handling both timedelta and integer seconds
+    is_run_activity = activity_type.lower() == 'run'
+    
+    # Format duration in hours:minutes:seconds
     moving_time_obj = activity.moving_time
-    total_seconds = 0
+    # Format time in a more readable way (HH:MM:SS)
     if isinstance(moving_time_obj, timedelta):
         total_seconds = moving_time_obj.total_seconds()
-    elif isinstance(moving_time_obj, int):
-        total_seconds = moving_time_obj
-    
-    # Calculate pace in min/mile (U.S. customary units)
-    if total_seconds > 0 and distance_miles > 0:
-        pace_seconds_per_mile = total_seconds / distance_miles
-        pace_minutes = int(pace_seconds_per_mile // 60)
-        pace_seconds = int(pace_seconds_per_mile % 60)
-        pace_str = f"{pace_minutes}:{pace_seconds:02d} min/mile"  # U.S. customary pace
+        hours = int(total_seconds // 3600)
+        minutes = int((total_seconds % 3600) // 60)
+        seconds = int(total_seconds % 60)
+        if hours > 0:
+            duration_formatted = f"{hours}:{minutes:02d}:{seconds:02d} hours"
+        else:
+            duration_formatted = f"{minutes}:{seconds:02d} minutes"
     else:
-        pace_str = "unknown pace"
-    
-    # Calculate elevation in feet (U.S. customary units)
-    total_elevation_gain_meters = getattr(activity, 'total_elevation_gain', 0)
-    total_elevation_gain_feet = round(total_elevation_gain_meters * 3.28084)  # Convert to feet
+        duration_formatted = str(moving_time_obj)
     
     # Get heart rate data if available
     avg_heartrate = getattr(activity, 'average_heartrate', None)
-    max_heartrate = getattr(activity, 'max_heartrate', None)
-    
-    # Analyze run type and splits
-    run_type = analyze_run_type(activity)
     
     # Get location information
     avg_lat, avg_lng = get_run_location(activity)
@@ -164,33 +159,66 @@ def build_prompt(activity, runner_description: str | None = None) -> str:
     if avg_lat and avg_lng:
         location_name = get_location_details(avg_lat, avg_lng)
     
-    # Initialize prompt with the run type
-    if run_type == "Interval Run":
-        prompt = "Create a stylized running poster celebrating a recent intense interval workout. "
-    elif run_type == "Long Run":
-        prompt = "Create a stylized running poster celebrating a recent long run. "
-    elif run_type == "Tempo Run":
-        prompt = "Create a stylized running poster celebrating a recent tempo run. "
+    # Only process these for run-type activities
+    if is_run_activity:
+        # Extract activity stats and convert to US customary units
+        distance_meters = activity.distance
+        distance_km = round(distance_meters / 1000.0, 2)
+        distance_miles = round(distance_meters / 1609.34, 2)
+        
+        # Calculate pace from moving_time, handling both timedelta and integer seconds
+        total_seconds = 0
+        if isinstance(moving_time_obj, timedelta):
+            total_seconds = moving_time_obj.total_seconds()
+        elif isinstance(moving_time_obj, int):
+            total_seconds = moving_time_obj
+        
+        # Calculate pace in min/mile (U.S. customary units)
+        if total_seconds > 0 and distance_miles > 0:
+            pace_seconds_per_mile = total_seconds / distance_miles
+            pace_minutes = int(pace_seconds_per_mile // 60)
+            pace_seconds = int(pace_seconds_per_mile % 60)
+            pace_str = f"{pace_minutes}:{pace_seconds:02d} min/mile"  # U.S. customary pace
+        else:
+            pace_str = "unknown pace"
+        
+        # Calculate elevation in feet (U.S. customary units)
+        total_elevation_gain_meters = getattr(activity, 'total_elevation_gain', 0)
+        total_elevation_gain_feet = round(total_elevation_gain_meters * 3.28084)  # Convert to feet
+        
+        # Analyze run type and splits
+        run_type = analyze_run_type(activity)
+        activity_description = run_type.lower()
     else:
-        prompt = "Create a stylized running poster celebrating a recent easy run. "
+        # For non-run activities, use the activity type as the description
+        activity_description = activity_type.lower()
+        distance_miles = None
+        pace_str = None
+        total_elevation_gain_feet = None
     
-    # Add basic stats in U.S. customary units
-    prompt += f"The run was {distance_miles} miles with moving time {moving_time} and avg pace {pace_str}. "
+    # Initialize prompt with the activity type and title
+    prompt = f"Create a stylized {activity_description} poster celebrating a recent {activity_description}. "
+    prompt += f"Activity title: '{activity_name}'. "
+    
+    # For run activities, include distance, pace, and elevation
+    if is_run_activity:
+        prompt += f"The run was {distance_miles} miles with duration {duration_formatted} and avg pace {pace_str}. "
+        prompt += f"The run included {total_elevation_gain_feet} feet of elevation gain. "
+    else:
+        # For non-run activities, just include duration
+        prompt += f"The activity duration was {duration_formatted}. "
     
     # Add heart rate information if available
     if avg_heartrate:
-        prompt += f"Average heart rate during the run was {int(avg_heartrate)} BPM. "
-    
-    # Add elevation in feet
-    prompt += f"The run included {total_elevation_gain_feet} feet of elevation gain. "
+        prompt += f"Average heart rate during the {activity_description} was {int(avg_heartrate)} BPM. "
     
     # Add location information
     if location_name:
-        prompt += f"The run took place in {location_name}. Show visual elements or scenery that represents this location. "
+        prompt += f"The {activity_description} took place in {location_name}. Show visual elements or scenery that represents this location. "
     
     # Add reference to runner description if provided
     if runner_description:
-        prompt += f"The runner should look like the person in the reference image, but in running gear. Keep the same facial features and general appearance, but show them in motion with running attire. "
+        prompt += f"The athlete should look like the person in the reference image, but in appropriate {activity_description} gear. Keep the same facial features and general appearance, but show them in motion with appropriate attire. "
     
     # Add usage disclaimer
     prompt += "This is for personal, non-commercial use only. "
@@ -199,17 +227,23 @@ def build_prompt(activity, runner_description: str | None = None) -> str:
     prompt += "Overall style should evoke accomplishment and athleticism, with dynamic motion and inspirational feel. "
     
     # Add instructions for integrating stats
-    prompt += f"Add visual elements showing the distance ({distance_miles} miles) and pace ({pace_str})"
+    stats_prompt = ""
     
-    # Add heart rate to visualization if available
+    # For run activities, include distance and pace
+    if is_run_activity and distance_miles and pace_str:
+        stats_prompt += f"the distance ({distance_miles} miles) and pace ({pace_str})"
+    
+    # For all activities, add heart rate if available
     if avg_heartrate:
-        prompt += f" and heart rate ({int(avg_heartrate)} BPM)"
+        if stats_prompt:
+            stats_prompt += f" and heart rate ({int(avg_heartrate)} BPM)"
+        else:
+            stats_prompt += f"heart rate ({int(avg_heartrate)} BPM)"
     
-    # Finish the stats visualization instruction
-    prompt += " statistics artistically integrated into the design. "
-    
-    # Add instruction to avoid duplicating numbers
-    prompt += "Do not duplicate any numbers in the image - each statistic should appear only once. "
+    # Only add the stats visualization instruction if we have stats to visualize
+    if stats_prompt:
+        prompt += f"Add visual elements showing {stats_prompt} statistics artistically integrated into the design. "
+        prompt += "Do not duplicate any numbers in the image - each statistic should appear only once. "
     
     # Final reminder that this is fictional
     prompt += "This is purely fictional artwork for personal use."
@@ -438,6 +472,22 @@ def analyze_run_type(activity) -> str:
     run_type = "run"
     
     try:
+        # First check run name for common interval workout indicators
+        if hasattr(activity, 'name'):
+            name_lower = activity.name.lower()
+            interval_keywords = ['interval', 'repeat', 'x', '400', '800', '1000', '1200', '1600', 'mile repeat', 'hiit']
+            
+            # Check for high intensity interval workout keywords
+            hiit_keywords = ['hiit', 'high intensity', 'sprint', 'tabata']
+            for keyword in hiit_keywords:
+                if keyword in name_lower:
+                    return "High Intensity Interval Training"
+            
+            # Check if any interval keywords are in the run name
+            for keyword in interval_keywords:
+                if keyword in name_lower:
+                    return "Interval Run"
+        
         # Get splits if available
         splits = []
         if hasattr(activity, 'splits_metric') and activity.splits_metric:
@@ -485,16 +535,19 @@ def analyze_run_type(activity) -> str:
         # New decision logic based on the specified criteria
         if alternating_pattern and pace_variation > avg_pace * 0.2:
             # Clear alternating pattern of fast/slow segments
-            run_type = "interval workout"
-        elif distance_miles >= 1 and avg_pace_secs_per_mile >= 450:
-            # > 5 miles and at or slower than 7:30 pace
-            run_type = "easy run"
+            run_type = "Interval Run"
+        elif distance_miles > 5 and avg_pace_secs_per_mile >= 450:
+            # > 5 miles and at or slower than 7:30 min/mile
+            run_type = "Easy Run"
         elif 3 <= distance_miles <= 10 and avg_pace_secs_per_mile < 450 and pace_std_dev < avg_pace * 0.1:
             # Between 3-10 miles at faster than 7:30 pace and relatively consistent
-            run_type = "tempo run"
+            run_type = "Tempo Run"
         elif distance_miles > 10 and avg_pace_secs_per_mile >= 450:
             # > 10 miles and at or faster than 7:30 pace
-            run_type = "long run"
+            run_type = "Long Run"
+        elif distance_miles <= 5 and avg_pace_secs_per_mile < 450:
+            # Short and fast runs that aren't intervals
+            run_type = "Tempo Run" 
         
         return run_type
     except Exception as e:
