@@ -29,6 +29,9 @@ generated_images/
 test_generated_images/
 temp_*.png
 
+# Personal photos (uncomment if you want to exclude)
+# bryanphotos/
+
 # Virtual Environment
 venv/
 ENV/

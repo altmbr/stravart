@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>Strava Run Art</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Strava Run Art</h1>
+            <p class="tagline">Transform your runs into art</p>
+        </header>
+
+        <main>
+            <!-- Authentication Section -->
+            <section id="auth-section" class="card">
+                <h2>Connect to Strava</h2>
+                <p class="auth-status" id="auth-status">Not connected</p>
+                <button id="connect-btn" class="btn btn-primary">
+                    Connect with Strava
+                </button>
+            </section>
+
+            <!-- Activities Section -->
+            <section id="activities-section" class="hidden">
+                <h2>Your Recent Runs</h2>
+                <div id="activities-list" class="activities-list">
+                    <!-- Activities will be loaded here -->
+                </div>
+            </section>
+
+            <!-- Artwork Section -->
+            <section id="artwork-section" class="hidden">
+                <div class="card">
+                    <h2>Generated Artwork</h2>
+                    <div id="artwork-container" class="artwork-container">
+                        <div class="loading-spinner hidden" id="loading-spinner">
+                            <div class="spinner"></div>
+                            <p>Creating your artwork...</p>
+                        </div>
+                        <img id="artwork-image" class="artwork-image hidden" alt="Generated run artwork">
+                        <div class="artwork-actions hidden" id="artwork-actions">
+                            <button id="download-btn" class="btn btn-primary">
+                                Download Image
+                            </button>
+                            <button id="new-artwork-btn" class="btn btn-secondary">
+                                Create Another
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Error Message -->
+            <div id="error-message" class="error-message hidden"></div>
+        </main>
+
+        <footer>
+            <p>© 2024 Strava Run Art • For personal use only</p>
+        </footer>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

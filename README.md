@@ -37,7 +37,7 @@ The script will:
 
 1. Refresh your Strava `access_token`.
 2. Pull your latest activity (limit=1).
-3. Build a DALL·E prompt summarising the run.
-4. Generate a poster image, download it locally, and embed the public URL in the activity description.
+3. Build an image generation prompt summarising the run.
+4. Generate a poster image using OpenAI's gpt-image-1 model, download it locally, and provide instructions for adding it to Strava.
 
 Strava’s public API currently **does not allow adding photos** to an existing activity, so this script appends a link instead. If Strava adds that capability in the future, update `update_strava_description` accordingly.
