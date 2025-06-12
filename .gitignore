@@ -40,3 +40,7 @@ ENV/
 
 # macOS
 .DS_Store
+
+# Project documentation and planning
+todo.md
+CLAUDE.md
