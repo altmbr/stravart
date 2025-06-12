@@ -89,6 +89,5 @@ def analyze_run_type(activity) -> str:
             run_type = "Tempo Run" 
         
         return run_type
-    except Exception as e:
-        print(f"Error analyzing run type: {e}")
-        return run_type
+    except Exception:
+        return run_type  # Return fallback on error

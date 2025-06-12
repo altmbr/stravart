@@ -157,9 +157,6 @@ def generate_image(prompt: str) -> str:
     """Generate an image via the OpenAI image generation API (gpt-image-1). Returns the hosted URL or raises with detailed diagnostics."""
     client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
-    print(f"OpenAI SDK version: {openai.__version__}")
-    
-    print(f"Sending image generation request. Model=gpt-image-1, Size={IMAGE_SIZE}")
     try:
         # Open the reference image
         with open("bryanphotos/Bryan.jpg", "rb") as image_file:
@@ -169,14 +166,7 @@ def generate_image(prompt: str) -> str:
                 prompt=prompt
             )
         
-        # Log the full response for debugging
-        print("\nFull API Response:")
-        print(f"Response type: {type(response)}")
-        print(f"Response attributes: {dir(response)}")
-        print(f"Response data: {response.data}")
-        
         if not response.data:
-            print("No data in response")
             raise RuntimeError("Image generation returned no data")
             
         # Get the base64 data from the response
@@ -197,19 +187,13 @@ def generate_image(prompt: str) -> str:
         return local_path
         
     except openai.BadRequestError as bre:
-        print("\nBadRequestError details:")
-        print(f"Error type: {type(bre)}")
-        print(f"Error attributes: {dir(bre)}")
-        print(f"Error body: {getattr(bre, 'body', '<no body>')}")
+        print(f"OpenAI API error: {bre}")
         raise
     except openai.OpenAIError as e:
-        print(f"\nOpenAI API error: {e.__class__.__name__}: {e}")
-        print(f"Error type: {type(e)}")
-        print(f"Error attributes: {dir(e)}")
+        print(f"OpenAI API error: {e}")
         raise
     except Exception as e:
-        print(f"\nUnexpected error: {type(e)}: {e}")
-        print(f"Error attributes: {dir(e)}")
+        print(f"Unexpected error during image generation: {e}")
         raise
 
 
@@ -249,21 +233,18 @@ def get_runner_image() -> tuple[str | None, str | None]:
             for f in os.listdir(BRYAN_IMAGES_DIR) 
             if os.path.isfile(os.path.join(BRYAN_IMAGES_DIR, f))
         ])
-        print(f"Selected runner image: {image_path}")
     elif os.path.exists(USER_IMAGES_DIR):
         image_path = random.choice([
             os.path.join(USER_IMAGES_DIR, f) 
             for f in os.listdir(USER_IMAGES_DIR) 
             if os.path.isfile(os.path.join(USER_IMAGES_DIR, f))
         ])
-        print(f"Selected runner image from user directory: {image_path}")
     
     # Get description if we have an image
     if image_path:
         try:
             description = describe_runner_photo(image_path)
-        except Exception as e:
-            print(f"Error analyzing runner photo: {e}")
-            print("Falling back to standard runner description")
+        except Exception:
+            pass  # Silently fall back if photo analysis fails
     
     return image_path, description

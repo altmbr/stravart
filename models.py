@@ -37,8 +37,8 @@ def format_activity_summary(activity, index: int):
                 location_name = get_location_details(lat, lng)
                 if location_name:
                     location = f" in {location_name}"
-        except Exception as e:
-            print(f"Error getting location: {e}")
+        except Exception:
+            pass  # Silently continue if location lookup fails
     
     # Format the summary
     return f"{index}. {date_str}: {name} - {distance_miles} miles{heart_rate_info}{location}"

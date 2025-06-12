@@ -15,8 +15,6 @@ def get_location_details(lat, lng) -> str:
     if not lat or not lng:
         return None
     
-    # Print the coordinates we're using
-    print(f"Looking up location for coordinates: ({lat}, {lng})")
         
     try:
         # Force coordinate conversion to float just in case
@@ -60,12 +58,10 @@ def get_location_details(lat, lng) -> str:
         # Check if coordinates fall within any known range
         for (lat_range, lng_range, location) in location_ranges:
             if lat_range[0] <= lat <= lat_range[1] and lng_range[0] <= lng <= lng_range[1]:
-                print(f"Location identified: {location}")
                 return location
         
         # If no match, we can return a general "based on coordinates" message
         coords_rounded = f"{lat:.2f}, {lng:.2f}"
-        print(f"No specific location identified for {coords_rounded}")
         return f"coordinates {coords_rounded}"
         
     except Exception as e:
@@ -86,9 +82,6 @@ def get_run_location(activity) -> tuple[float, float]:
         start_latlng = getattr(activity, 'start_latlng', None)
         end_latlng = getattr(activity, 'end_latlng', None)
         
-        # Debug log the location data
-        print(f"Start location: {start_latlng}")
-        print(f"End location: {end_latlng}")
         
         # Calculate average location
         if start_latlng and end_latlng:
@@ -105,7 +98,6 @@ def get_run_location(activity) -> tuple[float, float]:
                 start_lat = float(start_latlng.root[0])
                 start_lng = float(start_latlng.root[1])
             else:
-                print(f"Unrecognized start location format: {type(start_latlng)}")
                 return None, None
                 
             # Same for end point
@@ -119,14 +111,12 @@ def get_run_location(activity) -> tuple[float, float]:
                 end_lat = float(end_latlng.root[0])
                 end_lng = float(end_latlng.root[1])
             else:
-                print(f"Unrecognized end location format: {type(end_latlng)}")
                 return None, None
             
             # Calculate averages
             avg_lat = (start_lat + end_lat) / 2
             avg_lng = (start_lng + end_lng) / 2
             
-            print(f"Average location: ({avg_lat}, {avg_lng})")
             return avg_lat, avg_lng
         
         # If we don't have both start and end, try to use start point only

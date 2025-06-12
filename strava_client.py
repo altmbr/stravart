@@ -3,7 +3,7 @@ from stravalib import Client
 from config import STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET, STRAVA_REFRESH_TOKEN
 
 
-def get_strava_access_token() -> str:
+def get_strava_access_token() -> tuple[str, int]:
     """Exchange the refresh token for a short‑lived access token."""
     resp = requests.post(
         "https://www.strava.com/oauth/token",
@@ -16,7 +16,8 @@ def get_strava_access_token() -> str:
         timeout=10,
     )
     resp.raise_for_status()
-    return resp.json()["access_token"]
+    data = resp.json()
+    return data["access_token"], data["expires_at"]
 
 
 def get_last_run(client: Client):

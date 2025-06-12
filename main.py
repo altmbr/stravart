@@ -2,6 +2,7 @@ from stravalib import Client
 from strava_client import get_strava_access_token, get_recent_runs, get_activity_details
 from image_generator import build_prompt, generate_image
 from cli import select_activity
+from config import STRAVA_REFRESH_TOKEN, STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET
 
 """
 Generate and attach a summary image for the athlete's most recent Strava run.
@@ -22,10 +23,16 @@ def main():
     try:
         # 1. Connect to Strava API
         print("Fetching Strava access token...")
-        access_token = get_strava_access_token()
+        access_token, expires_at = get_strava_access_token()
         
         print("Initializing Strava client...")
         strava_client = Client(access_token=access_token)
+        # Set client properties to avoid warnings and enable auto-refresh
+        strava_client.refresh_token = STRAVA_REFRESH_TOKEN
+        strava_client.client_id = STRAVA_CLIENT_ID
+        strava_client.client_secret = STRAVA_CLIENT_SECRET
+        # Set token expiration time as timestamp (unix time)
+        strava_client.token_expires = expires_at
         
         # 2. Get recent runs
         print("Fetching your recent runs...")
